@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { EyeOff, Flag, Send, ShieldAlert } from 'lucide-react';
 import { CONTENT_CATEGORIES, type ContentCategory, type RoomState, type WhoSaidThatState } from '@chaos/shared';
@@ -23,7 +23,15 @@ export function WhoSaidThatView({
   const [category, setCategory] = useState<ContentCategory>('funny');
   const [error, setError] = useState<string | null>(null);
   const [reported, setReported] = useState(false);
+  const [localCount, setLocalCount] = useState(0);
 
+  useEffect(() => {
+    if (state.phase === 'submitting' && state.submissionsReceivedCount === 0) {
+      setLocalCount(0);
+    }
+  }, [state.phase, state.submissionsReceivedCount]);
+
+  const myCount = Math.max(state.mySubmissionCount, localCount);
   const hasGuessed = state.guessedPlayerIds.includes(playerId);
 
   const submitConfession = (e: React.FormEvent) => {
@@ -32,7 +40,11 @@ export function WhoSaidThatView({
     socket.emit('game:submit', { text, category }, (res) => {
       if (res?.ok) {
         setText('');
+        setLocalCount((c) => Math.min(2, c + 1));
       } else {
+        if (res?.error?.includes('maximum')) {
+          setLocalCount(2);
+        }
         setError(res?.error || 'Could not submit.');
       }
     });
@@ -82,7 +94,7 @@ export function WhoSaidThatView({
             </span>
           </div>
 
-          {state.mySubmissionCount < 2 ? (
+          {myCount < 2 ? (
             <form onSubmit={submitConfession} className="space-y-3">
               <textarea
                 required
@@ -108,7 +120,7 @@ export function WhoSaidThatView({
                 </select>
                 <button type="submit" className="chaos-btn-primary">
                   <Send className="w-4 h-4" />
-                  <span>Submit Anonymously ({state.mySubmissionCount}/2)</span>
+                  <span>Submit Anonymously ({myCount}/2)</span>
                 </button>
               </div>
             </form>
