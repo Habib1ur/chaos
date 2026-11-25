@@ -198,13 +198,18 @@ export default function RoomPage() {
       <div className="chaos-card p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="font-extrabold text-lg sm:text-xl">{room.name}</h1>
-              <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-full bg-chaos-blue-soft dark:bg-chaos-dark-elevated text-chaos-blue dark:text-chaos-dark-blue">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="font-extrabold text-xl sm:text-2xl">{room.name}</h1>
+              <button
+                type="button"
+                onClick={copyInviteLink}
+                title="Click to copy invite link"
+                className="font-mono text-lg sm:text-2xl font-extrabold tracking-[0.2em] px-4 py-1.5 rounded-btn bg-chaos-blue-soft dark:bg-chaos-dark-elevated text-chaos-blue dark:text-chaos-dark-blue border border-chaos-blue/30 hover:border-chaos-blue transition-colors"
+              >
                 {room.code}
-              </span>
+              </button>
             </div>
-            <p className="text-xs text-chaos-text-secondary">
+            <p className="text-xs sm:text-sm text-chaos-text-secondary mt-1">
               {selectedGameMeta?.name} • {room.players.length}/{room.settings.maxPlayers} players
             </p>
           </div>
