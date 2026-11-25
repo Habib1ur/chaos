@@ -25,7 +25,7 @@ export function RoomChat({ enabled }: { enabled: boolean }) {
   };
 
   return (
-    <div className="chaos-card p-4 flex flex-col h-[380px] lg:h-[460px]">
+    <div className="chaos-card p-4 flex flex-col h-[380px] lg:h-auto lg:flex-1 lg:min-h-[380px]">
       <div className="flex items-center justify-between pb-2.5 border-b border-chaos-border dark:border-chaos-dark-border">
         <h3 className="font-bold text-sm">Room Chat</h3>
         {reactions.length > 0 && (

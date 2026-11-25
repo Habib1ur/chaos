@@ -298,9 +298,9 @@ export default function RoomPage() {
       )}
 
       {/* Main Layout */}
-      <div className="grid lg:grid-cols-12 gap-6 items-start">
+      <div className="grid lg:grid-cols-12 gap-6 lg:items-stretch">
         {/* Left/Center Main Stage */}
-        <div className="lg:col-span-8 space-y-6">
+        <div className="lg:col-span-8 flex flex-col gap-6">
           {room.status === 'results' && results ? (
             <ResultsView results={results} isHost={isHost} />
           ) : room.status === 'playing' && gameState ? (
@@ -452,8 +452,8 @@ export default function RoomPage() {
         </div>
 
         {/* Right Sidebar: Players & Chat */}
-        <div className="lg:col-span-4 space-y-6">
-          <div className="chaos-card p-4 space-y-3">
+        <div className="lg:col-span-4 flex flex-col gap-6">
+          <div className="chaos-card p-4 space-y-3 shrink-0">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-sm flex items-center gap-2">
                 <Users className="w-4 h-4 text-chaos-blue" />
