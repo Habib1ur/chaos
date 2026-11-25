@@ -67,6 +67,9 @@ export class RoomManager {
     password?: string;
     maxPlayers: number;
     intensity: RoomSettings['intensity'];
+    timerSeconds?: number;
+    anonymousMode?: 'classic' | 'spotlight';
+    anonymousMessagesPerPlayer?: number;
     categories: RoomSettings['categories'];
     socketId: string;
     userId?: string | null;
@@ -110,9 +113,9 @@ export class RoomManager {
       intensity: params.intensity,
       categories: params.categories,
       rounds: ROOM_DEFAULTS.rounds,
-      timerSeconds: ROOM_DEFAULTS.roundTimerSeconds,
-      anonymousMessagesPerPlayer: 2,
-      anonymousMode: 'classic',
+      timerSeconds: params.timerSeconds ?? ROOM_DEFAULTS.roundTimerSeconds,
+      anonymousMessagesPerPlayer: params.anonymousMessagesPerPlayer ?? 2,
+      anonymousMode: params.anonymousMode ?? 'classic',
       revealAuthorsInAnonymous: true,
       noConsecutiveKing: true,
     };

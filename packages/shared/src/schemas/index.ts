@@ -24,6 +24,9 @@ export const createRoomSchema = z.object({
   password: z.string().max(32).optional(),
   maxPlayers: z.number().int().min(2).max(16).default(12),
   intensity: z.enum(CONTENT_INTENSITIES).default('medium'),
+  timerSeconds: z.number().int().min(0).max(180).default(45),
+  anonymousMode: z.enum(['classic', 'spotlight']).default('classic'),
+  anonymousMessagesPerPlayer: z.number().int().min(1).max(5).default(2),
   categories: z.array(z.enum(CONTENT_CATEGORIES)).min(1).default(['funny', 'lighthearted', 'friendship']),
 });
 

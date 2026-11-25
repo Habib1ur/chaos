@@ -30,6 +30,9 @@ function CreateRoomForm() {
   const [visibility, setVisibility] = useState<RoomVisibility>('private');
   const [maxPlayers, setMaxPlayers] = useState(12);
   const [intensity, setIntensity] = useState<ContentIntensity>('medium');
+  const [timerSeconds, setTimerSeconds] = useState(45);
+  const [anonymousMode, setAnonymousMode] = useState<'classic' | 'spotlight'>('classic');
+  const [anonymousMessagesPerPlayer, setAnonymousMessagesPerPlayer] = useState(2);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -50,6 +53,9 @@ function CreateRoomForm() {
         visibility,
         maxPlayers,
         intensity,
+        timerSeconds,
+        anonymousMode,
+        anonymousMessagesPerPlayer,
         password: password.trim() || undefined,
         categories: ['funny', 'lighthearted', 'friendship', 'creative'],
       },
@@ -186,6 +192,58 @@ function CreateRoomForm() {
                 />
               </div>
             </div>
+          </div>
+
+          <div className="grid sm:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-semibold mb-1.5">Round Timer</label>
+              <select
+                value={timerSeconds}
+                onChange={(e) => setTimerSeconds(Number(e.target.value))}
+                className="w-full px-3 py-2.5 min-h-[44px] rounded-btn border border-chaos-border dark:border-chaos-dark-border bg-chaos-surface dark:bg-chaos-dark-elevated"
+              >
+                <option value={0}>No Timer (Untimed)</option>
+                <option value={15}>15 seconds</option>
+                <option value={30}>30 seconds</option>
+                <option value={45}>45 seconds</option>
+                <option value={60}>60 seconds</option>
+                <option value={90}>90 seconds</option>
+              </select>
+            </div>
+
+            {selectedGame === 'who-said-that' && (
+              <>
+                <div>
+                  <label className="block text-sm font-semibold mb-1.5">
+                    Who Said That? Mode
+                  </label>
+                  <select
+                    value={anonymousMode}
+                    onChange={(e) => setAnonymousMode(e.target.value as 'classic' | 'spotlight')}
+                    className="w-full px-3 py-2.5 min-h-[44px] rounded-btn border border-chaos-border dark:border-chaos-dark-border bg-chaos-surface dark:bg-chaos-dark-elevated"
+                  >
+                    <option value="classic">Everyone Submits (Classic)</option>
+                    <option value="spotlight">Spotlight (1 Stays, Others Msg)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold mb-1.5">
+                    Anonymous Msgs / Player
+                  </label>
+                  <select
+                    value={anonymousMessagesPerPlayer}
+                    onChange={(e) => setAnonymousMessagesPerPlayer(Number(e.target.value))}
+                    className="w-full px-3 py-2.5 min-h-[44px] rounded-btn border border-chaos-border dark:border-chaos-dark-border bg-chaos-surface dark:bg-chaos-dark-elevated"
+                  >
+                    <option value={1}>1 message</option>
+                    <option value={2}>2 messages</option>
+                    <option value={3}>3 messages</option>
+                    <option value={5}>5 messages</option>
+                  </select>
+                </div>
+              </>
+            )}
           </div>
 
           <div>
