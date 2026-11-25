@@ -414,43 +414,47 @@ export default function RoomPage() {
                       </select>
                     </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold mb-1">
-                        Who Said That? Mode
-                      </label>
-                      <select
-                        value={room.settings.anonymousMode ?? 'classic'}
-                        onChange={(e) =>
-                          socket.emit('room:settings:update', {
-                            anonymousMode: e.target.value as 'classic' | 'spotlight',
-                          })
-                        }
-                        className="w-full px-3 py-2 min-h-[44px] rounded-btn border border-chaos-border dark:border-chaos-dark-border bg-chaos-surface dark:bg-chaos-dark-surface text-sm"
-                      >
-                        <option value="classic">Everyone Submits (Classic)</option>
-                        <option value="spotlight">Spotlight (1 Stays, Others Msg)</option>
-                      </select>
-                    </div>
+                    {room.selectedGame === 'who-said-that' && (
+                      <>
+                        <div>
+                          <label className="block text-xs font-semibold mb-1">
+                            Who Said That? Mode
+                          </label>
+                          <select
+                            value={room.settings.anonymousMode ?? 'classic'}
+                            onChange={(e) =>
+                              socket.emit('room:settings:update', {
+                                anonymousMode: e.target.value as 'classic' | 'spotlight',
+                              })
+                            }
+                            className="w-full px-3 py-2 min-h-[44px] rounded-btn border border-chaos-border dark:border-chaos-dark-border bg-chaos-surface dark:bg-chaos-dark-surface text-sm"
+                          >
+                            <option value="classic">Everyone Submits (Classic)</option>
+                            <option value="spotlight">Spotlight (1 Stays, Others Msg)</option>
+                          </select>
+                        </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold mb-1">
-                        Anonymous Msgs / Player
-                      </label>
-                      <select
-                        value={room.settings.anonymousMessagesPerPlayer ?? 2}
-                        onChange={(e) =>
-                          socket.emit('room:settings:update', {
-                            anonymousMessagesPerPlayer: Number(e.target.value),
-                          })
-                        }
-                        className="w-full px-3 py-2 min-h-[44px] rounded-btn border border-chaos-border dark:border-chaos-dark-border bg-chaos-surface dark:bg-chaos-dark-surface text-sm"
-                      >
-                        <option value={1}>1 message</option>
-                        <option value={2}>2 messages</option>
-                        <option value={3}>3 messages</option>
-                        <option value={5}>5 messages</option>
-                      </select>
-                    </div>
+                        <div>
+                          <label className="block text-xs font-semibold mb-1">
+                            Anonymous Msgs / Player
+                          </label>
+                          <select
+                            value={room.settings.anonymousMessagesPerPlayer ?? 2}
+                            onChange={(e) =>
+                              socket.emit('room:settings:update', {
+                                anonymousMessagesPerPlayer: Number(e.target.value),
+                              })
+                            }
+                            className="w-full px-3 py-2 min-h-[44px] rounded-btn border border-chaos-border dark:border-chaos-dark-border bg-chaos-surface dark:bg-chaos-dark-surface text-sm"
+                          >
+                            <option value={1}>1 message</option>
+                            <option value={2}>2 messages</option>
+                            <option value={3}>3 messages</option>
+                            <option value={5}>5 messages</option>
+                          </select>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap gap-4 text-xs font-medium">
@@ -466,18 +470,20 @@ export default function RoomPage() {
                       />
                       Allow player submissions
                     </label>
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={room.settings.revealAuthorsInAnonymous}
-                        onChange={(e) =>
-                          socket.emit('room:settings:update', {
-                            revealAuthorsInAnonymous: e.target.checked,
-                          })
-                        }
-                      />
-                      Reveal authors in Who Said That?
-                    </label>
+                    {room.selectedGame === 'who-said-that' && (
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={room.settings.revealAuthorsInAnonymous}
+                          onChange={(e) =>
+                            socket.emit('room:settings:update', {
+                              revealAuthorsInAnonymous: e.target.checked,
+                            })
+                          }
+                        />
+                        Reveal authors in Who Said That?
+                      </label>
+                    )}
                     <label className="inline-flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
