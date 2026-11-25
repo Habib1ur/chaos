@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Send } from 'lucide-react';
 import { REACTION_EMOJIS } from '@chaos/shared';
 import { getChaosSocket } from '@/lib/socket';
@@ -11,6 +11,13 @@ export function RoomChat({ enabled }: { enabled: boolean }) {
   const chatMessages = useChaosStore((s) => s.chatMessages);
   const reactions = useChaosStore((s) => s.reactions);
   const socket = getChaosSocket();
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+    }
+  }, [chatMessages.length]);
 
   const sendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,7 +32,7 @@ export function RoomChat({ enabled }: { enabled: boolean }) {
   };
 
   return (
-    <div className="chaos-card p-4 flex flex-col h-[380px] lg:h-auto lg:flex-1 lg:min-h-[380px]">
+    <div className="chaos-card p-4 flex flex-col h-[380px] lg:h-full lg:flex-1 lg:min-h-0 overflow-hidden">
       <div className="flex items-center justify-between pb-2.5 border-b border-chaos-border dark:border-chaos-dark-border">
         <h3 className="font-bold text-sm">Room Chat</h3>
         {reactions.length > 0 && (
@@ -55,7 +62,7 @@ export function RoomChat({ enabled }: { enabled: boolean }) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto py-3 space-y-2.5 text-sm">
+      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto py-3 space-y-2.5 text-sm">
         {chatMessages.length === 0 ? (
           <p className="text-xs text-chaos-text-muted text-center py-6">
             Say hello to the room!

@@ -298,7 +298,7 @@ export default function RoomPage() {
       )}
 
       {/* Main Layout */}
-      <div className="grid lg:grid-cols-12 gap-6 lg:items-stretch">
+      <div className="grid lg:grid-cols-12 gap-6 items-start">
         {/* Left/Center Main Stage */}
         <div className="lg:col-span-8 flex flex-col gap-6">
           {room.status === 'results' && results ? (
@@ -515,8 +515,8 @@ export default function RoomPage() {
           )}
         </div>
 
-        {/* Right Sidebar: Players & Chat */}
-        <div className="lg:col-span-4 flex flex-col gap-6">
+        {/* Right Sidebar: Players & Chat (sticky fixed-height on desktop) */}
+        <div className="lg:col-span-4 flex flex-col gap-4 lg:sticky lg:top-20 lg:h-[calc(100vh-6.5rem)]">
           <div className="chaos-card p-4 space-y-3 shrink-0">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-sm flex items-center gap-2">
@@ -525,7 +525,7 @@ export default function RoomPage() {
               </h3>
             </div>
 
-            <div className="space-y-2 max-h-64 overflow-y-auto">
+            <div className="space-y-2 max-h-48 overflow-y-auto">
               {room.players.map((p) => (
                 <div
                   key={p.id}
