@@ -15,6 +15,7 @@ interface InternalSlot {
   number: number;
   playerId: string;
   playerName: string;
+  playerAvatar: string;
 }
 
 interface SecretKingAssignment {
@@ -38,10 +39,18 @@ export class KingsGameEngine implements GameEngine<KingsGameState> {
   private state!: KingsGameState;
   private previousKingIds: string[] = [];
   private internalSlots: InternalSlot[] = [];
+  private shuffleTimer: ReturnType<typeof setTimeout> | null = null;
   /** Server-only secret storage. Never sent to clients until reveal. */
   private secretAssignments: SecretKingAssignment[] = [];
   /** Server-only secret Coup Dares: playerId -> dare text */
   private coupDares = new Map<string, string>();
+
+  cleanup(): void {
+    if (this.shuffleTimer) {
+      clearTimeout(this.shuffleTimer);
+      this.shuffleTimer = null;
+    }
+  }
 
   start(ctx: GameRuntimeContext): KingsGameState {
     this.setupRound(ctx, 1);
@@ -108,7 +117,21 @@ export class KingsGameEngine implements GameEngine<KingsGameState> {
       if (this.state.phase !== 'shuffling' && this.state.phase !== 'king-announced') {
         return { ok: false, error: 'Invalid phase transition.' };
       }
+      this.cleanup();
       this.state.phase = 'king-assigning';
+      ctx.broadcastState(this.getPublicState());
+      return { ok: true };
+    }
+
+    if (action === 'skip-shuffle') {
+      if (!player.isHost && this.state.kingPlayerId !== playerId) {
+        return { ok: false, error: 'Only the King or host can skip shuffle.' };
+      }
+      if (this.state.phase !== 'shuffling') {
+        return { ok: false, error: 'Not currently shuffling.' };
+      }
+      this.cleanup();
+      this.state.phase = 'king-announced';
       ctx.broadcastState(this.getPublicState());
       return { ok: true };
     }
@@ -131,8 +154,10 @@ export class KingsGameEngine implements GameEngine<KingsGameState> {
       current.unmasked = true;
       current.targetPlayerId = slot?.playerId ?? null;
       current.targetPlayerName = slot?.playerName ?? null;
+      current.targetPlayerAvatar = slot?.playerAvatar ?? null;
       current.jointTargetPlayerId = jointSlot?.playerId ?? null;
       current.jointTargetPlayerName = jointSlot?.playerName ?? null;
+      current.jointTargetPlayerAvatar = jointSlot?.playerAvatar ?? null;
 
       ctx.broadcastState(this.getPublicState());
       return { ok: true };
@@ -339,6 +364,7 @@ export class KingsGameEngine implements GameEngine<KingsGameState> {
         number: num,
         playerId: p.id,
         playerName: p.nickname,
+        playerAvatar: p.avatarId,
       };
     });
 
@@ -363,6 +389,7 @@ export class KingsGameEngine implements GameEngine<KingsGameState> {
   }
 
   private crownKingAndNotify(ctx: GameRuntimeContext) {
+    this.cleanup();
     let eligibleKings = ctx.players;
     if (ctx.settings.noConsecutiveKing && this.previousKingIds.length > 0) {
       const lastKing = this.previousKingIds[this.previousKingIds.length - 1];
@@ -375,10 +402,17 @@ export class KingsGameEngine implements GameEngine<KingsGameState> {
 
     this.state.kingPlayerId = king.id;
     this.state.kingPlayerName = king.nickname;
-    this.state.phase = 'king-announced';
+    this.state.phase = 'shuffling';
 
     this.emitPrivateStates(ctx);
     ctx.broadcastState(this.getPublicState());
+
+    this.shuffleTimer = setTimeout(() => {
+      if (this.state.phase === 'shuffling') {
+        this.state.phase = 'king-announced';
+        ctx.broadcastState(this.getPublicState());
+      }
+    }, 3200);
   }
 
   private emitPrivateStates(ctx: GameRuntimeContext) {

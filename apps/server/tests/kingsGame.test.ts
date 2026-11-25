@@ -52,8 +52,8 @@ function makeKingsContext() {
     sendPrivateToPlayer: (id, _event, payload) => {
       privateMessages.set(id, payload as KingsPrivateState);
     },
-    broadcastState: () => {},
-    finishGame: () => {},
+    broadcastState: () => { },
+    finishGame: () => { },
   };
 
   return { ctx, players, privateMessages };
@@ -73,9 +73,13 @@ describe('KingsGameEngine', () => {
     expect(engine.handleSubmit(ctx, 'p2', { text: '' }).ok).toBe(true); // blank -> auto-generated
     expect(engine.handleSubmit(ctx, 'p3', { text: 'Do 5 dramatic squats!' }).ok).toBe(true);
 
+    const afterDares = engine.getPublicState();
+    expect(afterDares.phase).toBe('shuffling');
+    expect(afterDares.kingPlayerId).toBeTruthy();
+
+    expect(engine.handleAction(ctx, 'p1', 'skip-shuffle').ok).toBe(true);
     const kingAnnounced = engine.getPublicState();
     expect(kingAnnounced.phase).toBe('king-announced');
-    expect(kingAnnounced.kingPlayerId).toBeTruthy();
 
     const kingId = kingAnnounced.kingPlayerId!;
     const nonKingId = players.find((p) => p.id !== kingId)!.id;
@@ -129,11 +133,16 @@ describe('KingsGameEngine', () => {
     expect(firstReveal.revealedAssignments[0].targetPlayerId).toBeNull();
     expect(firstReveal.revealedAssignments[0].targetPlayerName).toBeNull();
 
-    // Unmask current slot
+    // Unmask current slot (includes target & joint partner avatars/names)
     expect(engine.handleAction(ctx, kingId, 'unmask-current').ok).toBe(true);
     const unmasked = engine.getPublicState();
     expect(unmasked.revealedAssignments[0].unmasked).toBe(true);
     expect(unmasked.revealedAssignments[0].targetPlayerName).toBeTruthy();
+    expect(unmasked.revealedAssignments[0].targetPlayerAvatar).toBeTruthy();
+    if (unmasked.revealedAssignments[0].jointTargetNumber) {
+      expect(unmasked.revealedAssignments[0].jointTargetPlayerName).toBeTruthy();
+      expect(unmasked.revealedAssignments[0].jointTargetPlayerAvatar).toBeTruthy();
+    }
 
     // Resolve as creative (+20)
     expect(

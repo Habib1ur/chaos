@@ -135,9 +135,11 @@ export interface KingsPublicAssignment {
   unmasked: boolean;
   targetPlayerId: string | null;
   targetPlayerName: string | null;
+  targetPlayerAvatar?: string | null;
   jointTargetNumber?: number | null;
   jointTargetPlayerId?: string | null;
   jointTargetPlayerName?: string | null;
+  jointTargetPlayerAvatar?: string | null;
   type: 'truth' | 'dare';
   level: KingsMissionLevel;
   isStarPick?: boolean;

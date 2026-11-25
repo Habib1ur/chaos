@@ -86,10 +86,18 @@ export const useChaosStore = create<ChaosStoreState>((set) => ({
       chatMessages: [...s.chatMessages.slice(-79), msg],
     })),
 
-  addReaction: (rx) =>
+  addReaction: (rx) => {
     set((s) => ({
       reactions: [...s.reactions.slice(-14), rx],
-    })),
+    }));
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        set((s) => ({
+          reactions: s.reactions.filter((r) => r.id !== rx.id),
+        }));
+      }, 3500);
+    }
+  },
 
   toggleSound: () => set((s) => ({ soundEnabled: !s.soundEnabled })),
 
