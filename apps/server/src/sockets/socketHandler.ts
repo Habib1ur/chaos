@@ -64,12 +64,14 @@ export function registerSocketHandlers(io: TypedIO, roomManager: RoomManager) {
       cb({ ok: true, data: result });
     });
 
-    socket.on('room:join', (payload, cb) => {
+    socket.on('room:join', async (payload, cb) => {
       const parsed = joinRoomSchema.safeParse(payload);
       if (!parsed.success) {
         cb({ ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid join request.' });
         return;
       }
+
+      await roomManager.hydrateRoomFromDb(parsed.data.code);
 
       const result = roomManager.joinRoom({
         ...parsed.data,
@@ -101,11 +103,12 @@ export function registerSocketHandlers(io: TypedIO, roomManager: RoomManager) {
       });
     });
 
-    socket.on('player:reconnect', (payload, cb) => {
+    socket.on('player:reconnect', async (payload, cb) => {
       if (!payload?.roomCode || !payload?.sessionToken) {
         cb({ ok: false, error: 'Missing reconnection credentials.' });
         return;
       }
+      await roomManager.hydrateRoomFromDb(payload.roomCode);
       const res = roomManager.reconnectPlayer(payload.roomCode, payload.sessionToken, socket.id);
       if (!res.ok) {
         cb({ ok: false, error: res.error });

@@ -57,9 +57,48 @@ export default function RoomPage() {
   const [qrOpen, setQrOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(true);
 
   useEffect(() => {
     const socket = getChaosSocket();
+    setSocketConnected(socket.connected);
+
+    const attemptReconnect = () => {
+      setSocketConnected(true);
+      if (!code) return;
+      const savedRaw = sessionStorage.getItem(`chaos_room_${code}`);
+      if (!savedRaw) return;
+      try {
+        const saved = JSON.parse(savedRaw) as { playerId: string; sessionToken: string };
+        if (!room) setReconnecting(true);
+        socket.emit(
+          'player:reconnect',
+          { roomCode: code, sessionToken: saved.sessionToken },
+          (res) => {
+            setReconnecting(false);
+            if (res.ok && res.data) {
+              setSession({
+                room: res.data.room,
+                playerId: res.data.playerId,
+                sessionToken: saved.sessionToken,
+              });
+              if (res.data.gameState) setGameState(res.data.gameState);
+              if (res.data.kingsPrivate) setKingsPrivate(res.data.kingsPrivate);
+            } else {
+              // Room no longer exists on server; clear stale session so user sees Join Room
+              sessionStorage.removeItem(`chaos_room_${code}`);
+              clearRoom();
+            }
+          }
+        );
+      } catch {
+        setReconnecting(false);
+      }
+    };
+
+    const onDisconnect = () => {
+      setSocketConnected(false);
+    };
 
     const onRoomUpdated = (updated: typeof room) => {
       if (updated) setRoom(updated);
@@ -88,6 +127,8 @@ export default function RoomPage() {
       router.push('/room/join');
     };
 
+    socket.on('connect', attemptReconnect);
+    socket.on('disconnect', onDisconnect);
     socket.on('room:updated', onRoomUpdated);
     socket.on('game:started', onGameStarted);
     socket.on('game:updated', onGameUpdated);
@@ -97,36 +138,14 @@ export default function RoomPage() {
     socket.on('reaction:received', onReaction);
     socket.on('room:kicked', onKicked);
 
-    // Attempt seamless reconnection if user refreshed the tab
-    if (!room && code) {
-      const savedRaw = sessionStorage.getItem(`chaos_room_${code}`);
-      if (savedRaw) {
-        try {
-          const saved = JSON.parse(savedRaw) as { playerId: string; sessionToken: string };
-          setReconnecting(true);
-          socket.emit(
-            'player:reconnect',
-            { roomCode: code, sessionToken: saved.sessionToken },
-            (res) => {
-              setReconnecting(false);
-              if (res.ok && res.data) {
-                setSession({
-                  room: res.data.room,
-                  playerId: res.data.playerId,
-                  sessionToken: saved.sessionToken,
-                });
-                if (res.data.gameState) setGameState(res.data.gameState);
-                if (res.data.kingsPrivate) setKingsPrivate(res.data.kingsPrivate);
-              }
-            }
-          );
-        } catch {
-          setReconnecting(false);
-        }
-      }
+    // Run immediately if socket is already connected and we don't have room state yet
+    if (!room && socket.connected) {
+      attemptReconnect();
     }
 
     return () => {
+      socket.off('connect', attemptReconnect);
+      socket.off('disconnect', onDisconnect);
       socket.off('room:updated', onRoomUpdated);
       socket.off('game:started', onGameStarted);
       socket.off('game:updated', onGameUpdated);
@@ -209,8 +228,19 @@ export default function RoomPage() {
                 {room.code}
               </button>
             </div>
-            <p className="text-xs sm:text-sm text-chaos-text-secondary mt-1">
-              {selectedGameMeta?.name} • {room.players.length}/{room.settings.maxPlayers} players
+            <p className="text-xs sm:text-sm text-chaos-text-secondary mt-1 flex items-center gap-2">
+              <span>
+                {selectedGameMeta?.name} • {room.players.length}/{room.settings.maxPlayers} players
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                  socketConnected
+                    ? 'bg-chaos-green-soft text-chaos-green dark:bg-chaos-dark-elevated'
+                    : 'bg-chaos-warning/20 text-chaos-warning'
+                }`}
+              >
+                {socketConnected ? '● Live' : '● Reconnecting...'}
+              </span>
             </p>
           </div>
         </div>
@@ -402,9 +432,18 @@ export default function RoomPage() {
                     </label>
                   </div>
 
-                  <button type="button" onClick={startGame} className="chaos-btn-primary w-full py-3.5">
+                  <button
+                    type="button"
+                    onClick={startGame}
+                    disabled={!socketConnected}
+                    className="chaos-btn-primary w-full py-3.5"
+                  >
                     <Play className="w-5 h-5" />
-                    <span>Start {selectedGameMeta?.name}</span>
+                    <span>
+                      {room.players.length < (selectedGameMeta?.minPlayers ?? 2)
+                        ? `Need at least ${selectedGameMeta?.minPlayers ?? 2} players to start`
+                        : `Start ${selectedGameMeta?.name}`}
+                    </span>
                   </button>
                 </div>
               )}

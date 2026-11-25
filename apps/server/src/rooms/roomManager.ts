@@ -16,6 +16,7 @@ import { WhoSaidThatEngine } from '../games/who-said-that/whoSaidThatEngine';
 import { PartyGamesEngine } from '../games/party-games/partyGamesEngine';
 import { hashPassword, signToken, verifyPassword, verifyToken } from '../utils/crypto';
 import { SlidingWindowLimiter } from '../utils/moderation';
+import { prisma } from '../db/prisma';
 
 export interface InternalRoom {
   state: RoomState;
@@ -139,8 +140,92 @@ export class RoomManager {
     this.roomsByCode.set(code, internal);
     this.socketToRoom.set(params.socketId, { code, playerId });
 
+    if (prisma) {
+      prisma.room
+        .create({
+          data: {
+            id: roomId,
+            code,
+            name: params.roomName,
+            visibility: params.visibility,
+            passwordHash: internal.passwordHash,
+            hostPlayerId: playerId,
+            selectedGame: params.selectedGame,
+            status: 'lobby',
+            settingsJson: settings as unknown as object,
+            members: {
+              create: {
+                playerId,
+                userId: params.userId ?? null,
+                nickname: params.nickname,
+                avatarId: params.avatarId,
+                isHost: true,
+                score: 0,
+              },
+            },
+          },
+        })
+        .catch((err) => console.error('[DB] Failed to persist room:', err));
+    }
+
     const sessionToken = signToken({ roomCode: code, playerId, sessionId });
     return { room: state, playerId, sessionToken };
+  }
+
+  async hydrateRoomFromDb(code: string): Promise<InternalRoom | undefined> {
+    const existing = this.roomsByCode.get(code.toUpperCase());
+    if (existing) return existing;
+    if (!prisma) return undefined;
+
+    try {
+      const dbRoom = await prisma.room.findUnique({
+        where: { code: code.toUpperCase() },
+        include: { members: { where: { leftAt: null }, orderBy: { joinedAt: 'asc' } } },
+      });
+      if (!dbRoom) return undefined;
+
+      const settings = dbRoom.settingsJson as unknown as RoomSettings;
+      const players: PlayerInfo[] = dbRoom.members.map((m) => ({
+        id: m.playerId,
+        sessionId: `restored-${m.playerId}`,
+        userId: m.userId,
+        nickname: m.nickname,
+        avatarId: m.avatarId,
+        isHost: m.isHost,
+        isReady: m.isHost,
+        isGuest: !m.userId,
+        presence: 'disconnected',
+        score: m.score,
+        joinedAt: m.joinedAt.getTime(),
+      }));
+
+      const state: RoomState = {
+        id: dbRoom.id,
+        code: dbRoom.code,
+        name: dbRoom.name,
+        hostId: dbRoom.hostPlayerId,
+        selectedGame: dbRoom.selectedGame as GameId,
+        status: 'lobby',
+        settings,
+        players,
+        createdAt: dbRoom.createdAt.getTime(),
+      };
+
+      const internal: InternalRoom = {
+        state,
+        passwordHash: dbRoom.passwordHash,
+        engine: null,
+        lastResults: null,
+        chatHistory: [],
+        sessionToPlayer: new Map(),
+        playerSockets: new Map(),
+      };
+      this.roomsByCode.set(dbRoom.code, internal);
+      return internal;
+    } catch (err) {
+      console.error('[DB] Failed to hydrate room:', err);
+      return undefined;
+    }
   }
 
   joinRoom(params: {
@@ -195,6 +280,22 @@ export class RoomManager {
     internal.playerSockets.set(playerId, params.socketId);
     this.socketToRoom.set(params.socketId, { code: internal.state.code, playerId });
 
+    if (prisma) {
+      prisma.roomMember
+        .create({
+          data: {
+            roomId: internal.state.id,
+            playerId,
+            userId: params.userId ?? null,
+            nickname: params.nickname,
+            avatarId: params.avatarId,
+            isHost: false,
+            score: 0,
+          },
+        })
+        .catch((err) => console.error('[DB] Failed to persist room member:', err));
+    }
+
     const sessionToken = signToken({
       roomCode: internal.state.code,
       playerId,
@@ -226,12 +327,16 @@ export class RoomManager {
       return { ok: false, error: 'Room no longer exists.' };
     }
     const mappedPlayerId = internal.sessionToPlayer.get(payload.sessionId);
-    if (!mappedPlayerId || mappedPlayerId !== payload.playerId) {
-      return { ok: false, error: 'Session does not match a player in this room.' };
-    }
-    const player = internal.state.players.find((p) => p.id === mappedPlayerId);
+    const player = internal.state.players.find((p) => p.id === payload.playerId);
     if (!player) {
       return { ok: false, error: 'Player was removed from the room.' };
+    }
+    if (mappedPlayerId && mappedPlayerId !== payload.playerId) {
+      return { ok: false, error: 'Session does not match a player in this room.' };
+    }
+    if (!mappedPlayerId) {
+      // Re-register session mapping after DB hydration on server restart
+      internal.sessionToPlayer.set(payload.sessionId, player.id);
     }
 
     player.presence = internal.state.status === 'playing' ? 'playing' : 'online';
@@ -286,7 +391,18 @@ export class RoomManager {
     if (internal.state.players.length === 0) {
       internal.engine?.cleanup?.();
       this.roomsByCode.delete(internal.state.code);
+      if (prisma) {
+        prisma.room
+          .delete({ where: { code: internal.state.code } })
+          .catch(() => {});
+      }
       return { internal, deletedRoom: true };
+    }
+
+    if (prisma) {
+      prisma.roomMember
+        .deleteMany({ where: { roomId: internal.state.id, playerId } })
+        .catch(() => {});
     }
 
     if (internal.state.hostId === playerId) {
