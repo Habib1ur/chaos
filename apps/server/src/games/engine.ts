@@ -41,6 +41,20 @@ export interface GameEngine<TState extends ActiveGameState = ActiveGameState> {
   cleanup?(): void;
 }
 
+export function calculateSpeedMultiplier(
+  votedAt: number,
+  roundStartedAt: number,
+  timerSeconds: number
+): { multiplier: number; label?: string } {
+  if (timerSeconds <= 0) return { multiplier: 1 };
+  const totalMs = timerSeconds * 1000;
+  const elapsed = Math.max(0, votedAt - roundStartedAt);
+  const ratio = elapsed / totalMs;
+  if (ratio <= 0.25) return { multiplier: 1.5, label: '1.5× Speed!' };
+  if (ratio <= 0.5) return { multiplier: 1.25, label: '1.25× Fast!' };
+  return { multiplier: 1 };
+}
+
 export function buildRankings(players: PlayerInfo[], badgeWinner = 'Champion') {
   const sorted = [...players].sort((a, b) => b.score - a.score);
   return sorted.map((p, idx) => ({

@@ -8,8 +8,14 @@ import {
   type GameId,
   type PartyGameState,
   type PartyOption,
+  type RoundPointAward,
 } from '@chaos/shared';
-import { buildRankings, type GameEngine, type GameRuntimeContext } from '../engine';
+import {
+  buildRankings,
+  calculateSpeedMultiplier,
+  type GameEngine,
+  type GameRuntimeContext,
+} from '../engine';
 import { isContentSafe, sanitizeText } from '../../utils/moderation';
 import {
   HOT_TAKES_PROMPTS,
@@ -20,16 +26,27 @@ import {
 } from '../../utils/prompts';
 
 type PartyGameId = Exclude<GameId, 'truth-dare' | 'kings-game' | 'who-said-that'>;
+const REVEAL_HOLD_MS = 5000;
 
 export class PartyGamesEngine implements GameEngine<PartyGameState> {
   private state!: PartyGameState;
-  private votes = new Map<string, string>(); // playerId -> optionId
+  private votes = new Map<string, { optionId: string; votedAt: number }>();
   private lieIndex: number | null = null;
   private correctOptionId: string | null = null;
+  private phaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private roundStartedAt = Date.now();
 
   constructor(public readonly gameId: PartyGameId) {}
 
+  cleanup(): void {
+    if (this.phaseTimer) {
+      clearTimeout(this.phaseTimer);
+      this.phaseTimer = null;
+    }
+  }
+
   start(ctx: GameRuntimeContext): PartyGameState {
+    this.cleanup();
     this.votes.clear();
     this.setupRound(ctx, 1);
     return this.getPublicState();
@@ -41,6 +58,7 @@ export class PartyGamesEngine implements GameEngine<PartyGameState> {
       options: [...this.state.options],
       votedPlayerIds: [...this.state.votedPlayerIds],
       voteCounts: { ...this.state.voteCounts },
+      roundPoints: this.state.roundPoints ? { ...this.state.roundPoints } : {},
     };
   }
 
@@ -67,9 +85,7 @@ export class PartyGamesEngine implements GameEngine<PartyGameState> {
         id: `stmt-${idx}`,
         label: sanitizeText(s),
       }));
-      this.state.phase = 'voting';
-      this.state.endsAt = Date.now() + ctx.settings.timerSeconds * 1000;
-      ctx.broadcastState(this.getPublicState());
+      this.enterVotingPhase(ctx);
       return { ok: true };
     }
 
@@ -101,10 +117,9 @@ export class PartyGamesEngine implements GameEngine<PartyGameState> {
         id: `opt-${idx}`,
         label: sanitizeText(opt),
       }));
-      this.state.phase = 'voting';
       this.state.votedPlayerIds = [];
       this.state.voteCounts = {};
-      ctx.broadcastState(this.getPublicState());
+      this.enterVotingPhase(ctx);
       return { ok: true };
     }
 
@@ -126,13 +141,16 @@ export class PartyGamesEngine implements GameEngine<PartyGameState> {
     if (!this.state.options.some((o) => o.id === parsed.data.optionId)) {
       return { ok: false, error: 'Option does not exist.' };
     }
-    if (this.gameId === 'two-truths-lie' && this.state.storytellerId === playerId) {
-      return { ok: false, error: 'Storyteller cannot vote on their own lie.' };
-    }
 
-    this.votes.set(playerId, parsed.data.optionId);
+    // Storyteller in Two Truths & A Lie CAN vote to bluff, but won't receive points
+    this.votes.set(playerId, { optionId: parsed.data.optionId, votedAt: Date.now() });
     this.state.votedPlayerIds = Array.from(this.votes.keys());
-    ctx.broadcastState(this.getPublicState());
+
+    if (this.votes.size >= ctx.players.length) {
+      this.revealRound(ctx);
+    } else {
+      ctx.broadcastState(this.getPublicState());
+    }
     return { ok: true };
   }
 
@@ -147,73 +165,133 @@ export class PartyGamesEngine implements GameEngine<PartyGameState> {
     }
 
     if (action === 'reveal') {
-      const counts: Record<string, number> = {};
-      for (const opt of this.state.options) counts[opt.id] = 0;
-      for (const [voterId, choice] of this.votes.entries()) {
-        counts[choice] = (counts[choice] ?? 0) + 1;
-        if (
-          ctx.settings.enableScoring &&
-          this.correctOptionId &&
-          choice === this.correctOptionId
-        ) {
-          ctx.awardScore(voterId, 100);
-        }
-      }
-
-      let winnerId: string | null = null;
-      let maxVotes = -1;
-      for (const [optId, count] of Object.entries(counts)) {
-        if (count > maxVotes) {
-          maxVotes = count;
-          winnerId = optId;
-        }
-      }
-
-      if (this.gameId === 'most-likely-to' && winnerId && ctx.settings.enableScoring) {
-        ctx.awardScore(winnerId, 25);
-      }
-
-      this.state.voteCounts = counts;
-      this.state.winnerOptionId = winnerId;
-      this.state.correctOptionId = this.correctOptionId;
-      this.state.phase = 'reveal';
-      this.state.endsAt = null;
-      ctx.broadcastState(this.getPublicState());
+      this.revealRound(ctx);
       return { ok: true };
     }
 
     if (action === 'next-round') {
-      if (this.state.round >= this.state.totalRounds) {
-        this.state.phase = 'finished';
-        ctx.broadcastState(this.getPublicState());
-        const meta = GAME_CATALOG.find((g) => g.id === this.gameId);
-        ctx.finishGame({
-          gameId: this.gameId,
-          gameName: meta?.name ?? this.gameId,
-          rankings: buildRankings(ctx.players),
-          highlights: [
-            {
-              title: 'Session Complete',
-              description: `${this.state.round} rounds completed.`,
-            },
-          ],
-          endedAt: Date.now(),
-        });
-        return { ok: true };
-      }
-
-      this.votes.clear();
-      this.setupRound(ctx, this.state.round + 1);
-      ctx.broadcastState(this.getPublicState());
+      this.advanceRound(ctx);
       return { ok: true };
     }
 
     return { ok: false, error: `Unknown action: ${action}` };
   }
 
+  private enterVotingPhase(ctx: GameRuntimeContext) {
+    this.cleanup();
+    this.roundStartedAt = Date.now();
+    const timerMs = ctx.settings.timerSeconds > 0 ? ctx.settings.timerSeconds * 1000 : null;
+    this.state.phase = 'voting';
+    this.state.endsAt = timerMs ? this.roundStartedAt + timerMs : null;
+    ctx.broadcastState(this.getPublicState());
+
+    if (timerMs) {
+      this.phaseTimer = setTimeout(() => {
+        if (this.state.phase === 'voting') {
+          this.revealRound(ctx);
+        }
+      }, timerMs);
+    }
+  }
+
+  private revealRound(ctx: GameRuntimeContext) {
+    this.cleanup();
+    const counts: Record<string, number> = {};
+    const roundPoints: Record<string, RoundPointAward> = {};
+    for (const opt of this.state.options) counts[opt.id] = 0;
+
+    for (const [voterId, vote] of this.votes.entries()) {
+      counts[vote.optionId] = (counts[vote.optionId] ?? 0) + 1;
+
+      if (this.gameId === 'two-truths-lie' && this.state.storytellerId === voterId) {
+        roundPoints[voterId] = { points: 0, label: 'Bluff Vote (0 pts)' };
+        continue;
+      }
+
+      if (
+        ctx.settings.enableScoring &&
+        this.correctOptionId &&
+        vote.optionId === this.correctOptionId
+      ) {
+        const { multiplier, label } = calculateSpeedMultiplier(
+          vote.votedAt,
+          this.roundStartedAt,
+          ctx.settings.timerSeconds
+        );
+        const pts = Math.round(100 * multiplier);
+        ctx.awardScore(voterId, pts);
+        roundPoints[voterId] = { points: pts, multiplier, label };
+      }
+    }
+
+    let winnerId: string | null = null;
+    let maxVotes = -1;
+    for (const [optId, count] of Object.entries(counts)) {
+      if (count > maxVotes) {
+        maxVotes = count;
+        winnerId = optId;
+      }
+    }
+
+    if (this.gameId === 'most-likely-to' && winnerId && ctx.settings.enableScoring) {
+      ctx.awardScore(winnerId, 25);
+      roundPoints[winnerId] = { points: 25, label: 'Most Likely (+25)' };
+    }
+
+    const autoContinue =
+      ctx.settings.timerSeconds > 0 &&
+      this.gameId !== 'random-wheel' &&
+      this.gameId !== 'custom-polls';
+
+    this.state.voteCounts = counts;
+    this.state.winnerOptionId = winnerId;
+    this.state.correctOptionId = this.correctOptionId;
+    this.state.roundPoints = roundPoints;
+    this.state.phase = 'reveal';
+    this.state.endsAt = autoContinue ? Date.now() + REVEAL_HOLD_MS : null;
+    ctx.broadcastState(this.getPublicState());
+
+    if (autoContinue) {
+      this.phaseTimer = setTimeout(() => {
+        if (this.state.phase === 'reveal') {
+          this.advanceRound(ctx);
+        }
+      }, REVEAL_HOLD_MS);
+    }
+  }
+
+  private advanceRound(ctx: GameRuntimeContext) {
+    this.cleanup();
+    if (this.state.round >= this.state.totalRounds) {
+      this.state.phase = 'finished';
+      this.state.endsAt = null;
+      ctx.broadcastState(this.getPublicState());
+      const meta = GAME_CATALOG.find((g) => g.id === this.gameId);
+      ctx.finishGame({
+        gameId: this.gameId,
+        gameName: meta?.name ?? this.gameId,
+        rankings: buildRankings(ctx.players),
+        highlights: [
+          {
+            title: 'Session Complete',
+            description: `${this.state.round} rounds completed.`,
+          },
+        ],
+        endedAt: Date.now(),
+      });
+      return;
+    }
+
+    this.votes.clear();
+    this.setupRound(ctx, this.state.round + 1);
+    ctx.broadcastState(this.getPublicState());
+  }
+
   private setupRound(ctx: GameRuntimeContext, round: number) {
+    this.cleanup();
     this.correctOptionId = null;
     this.lieIndex = null;
+    this.roundStartedAt = Date.now();
     const totalRounds = Math.min(ctx.settings.rounds, 8);
     let promptText = '';
     let subText: string | undefined;
@@ -284,6 +362,11 @@ export class PartyGamesEngine implements GameEngine<PartyGameState> {
       }
     }
 
+    const timerMs =
+      phase === 'voting' && ctx.settings.timerSeconds > 0
+        ? ctx.settings.timerSeconds * 1000
+        : null;
+
     this.state = {
       gameId: this.gameId,
       phase,
@@ -298,7 +381,16 @@ export class PartyGamesEngine implements GameEngine<PartyGameState> {
       correctOptionId: null,
       wheelWinnerIndex: null,
       storytellerId,
-      endsAt: phase === 'voting' ? Date.now() + ctx.settings.timerSeconds * 1000 : null,
+      roundPoints: {},
+      endsAt: timerMs ? this.roundStartedAt + timerMs : null,
     };
+
+    if (timerMs) {
+      this.phaseTimer = setTimeout(() => {
+        if (this.state.phase === 'voting') {
+          this.revealRound(ctx);
+        }
+      }, timerMs);
+    }
   }
 }

@@ -303,7 +303,7 @@ export function WhoSaidThatView({
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="p-4 rounded-btn bg-chaos-green-soft dark:bg-chaos-dark-elevated text-center"
+              className="p-4 rounded-btn bg-chaos-green-soft dark:bg-chaos-dark-elevated text-center space-y-2"
             >
               {state.currentStatement.authorName ? (
                 <>
@@ -314,6 +314,11 @@ export function WhoSaidThatView({
                 <p className="text-sm font-semibold text-chaos-text-secondary">
                   Author identities are kept secret in this room!
                 </p>
+              )}
+              {state.endsAt && (
+                <div className="pt-1 max-w-xs mx-auto">
+                  <CountdownTimer endsAt={state.endsAt} totalSeconds={5} />
+                </div>
               )}
             </motion.div>
           )}
@@ -343,6 +348,7 @@ export function WhoSaidThatView({
                     : 0;
                 const isAuthor =
                   state.phase === 'reveal' && state.currentStatement?.authorId === p.id;
+                const award = state.phase === 'reveal' ? state.roundPoints?.[p.id] : undefined;
 
                 return (
                   <button
@@ -364,6 +370,16 @@ export function WhoSaidThatView({
                           {isAuthor && (
                             <span className="ml-2 text-xs text-chaos-green font-extrabold">
                               ✓ Author
+                            </span>
+                          )}
+                          {award && (
+                            <span
+                              className={`ml-2 text-xs font-bold ${
+                                award.points > 0 ? 'text-chaos-blue' : 'text-chaos-text-muted'
+                              }`}
+                            >
+                              {award.points > 0 ? `+${award.points} pts` : ''}
+                              {award.label ? ` • ${award.label}` : ''}
                             </span>
                           )}
                         </span>

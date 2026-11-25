@@ -3,9 +3,15 @@ import {
   anonymousGuessSchema,
   anonymousSubmitSchema,
   type AnonymousPublicStatement,
+  type RoundPointAward,
   type WhoSaidThatState,
 } from '@chaos/shared';
-import { buildRankings, type GameEngine, type GameRuntimeContext } from '../engine';
+import {
+  buildRankings,
+  calculateSpeedMultiplier,
+  type GameEngine,
+  type GameRuntimeContext,
+} from '../engine';
 import { isContentSafe, sanitizeText } from '../../utils/moderation';
 import { shuffleArray } from '../../utils/crypto';
 
@@ -22,18 +28,21 @@ interface InternalStatement {
   authorName: string;
 }
 
+const REVEAL_HOLD_MS = 5000;
+
 export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
   readonly gameId = 'who-said-that' as const;
   private state!: WhoSaidThatState;
   private statements: InternalStatement[] = [];
   private submissionsPerPlayer = new Map<string, number>();
-  private guesses = new Map<string, string>(); // guesserId -> targetPlayerId
-  private spotlightTimer: ReturnType<typeof setTimeout> | null = null;
+  private guesses = new Map<string, { targetPlayerId: string; votedAt: number }>();
+  private phaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private roundStartedAt = Date.now();
 
   cleanup(): void {
-    if (this.spotlightTimer) {
-      clearTimeout(this.spotlightTimer);
-      this.spotlightTimer = null;
+    if (this.phaseTimer) {
+      clearTimeout(this.phaseTimer);
+      this.phaseTimer = null;
     }
   }
 
@@ -57,11 +66,9 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       spotlightPlayerName = picked.nickname;
       initialPhase = 'selecting-spotlight';
 
-      this.spotlightTimer = setTimeout(() => {
+      this.phaseTimer = setTimeout(() => {
         if (this.state.phase === 'selecting-spotlight') {
-          this.state.phase = 'submitting';
-          this.state.endsAt = timerMs ? Date.now() + timerMs : null;
-          ctx.broadcastState(this.getPublicState());
+          this.enterSubmittingPhase(ctx);
         }
       }, 3000);
     }
@@ -83,9 +90,15 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       guessedPlayerIds: [],
       voteDistribution: {},
       liveVotes: {},
+      roundPoints: {},
       mySubmissionCount: 0,
       endsAt: initialPhase === 'submitting' && timerMs ? Date.now() + timerMs : null,
     };
+
+    if (initialPhase === 'submitting' && timerMs) {
+      this.scheduleSubmissionAutoAdvance(ctx, timerMs);
+    }
+
     return this.getPublicState();
   }
 
@@ -98,6 +111,7 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       liveVotes: Object.fromEntries(
         Object.entries(this.state.liveVotes).map(([k, v]) => [k, [...v]])
       ),
+      roundPoints: this.state.roundPoints ? { ...this.state.roundPoints } : {},
       mySubmissionCount: playerId ? (this.submissionsPerPlayer.get(playerId) ?? 0) : 0,
     };
   }
@@ -172,22 +186,30 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
     }
 
     // Even the writer and the Spotlight player can vote!
-    this.guesses.set(playerId, parsed.data.targetPlayerId);
+    this.guesses.set(playerId, {
+      targetPlayerId: parsed.data.targetPlayerId,
+      votedAt: Date.now(),
+    });
     this.state.guessesCount = this.guesses.size;
     this.state.guessedPlayerIds = Array.from(this.guesses.keys());
 
     // Recompute live voting balls & counts for everyone to see immediately
     const dist: Record<string, number> = {};
     const live: Record<string, string[]> = {};
-    for (const [voterId, targetId] of this.guesses.entries()) {
-      dist[targetId] = (dist[targetId] ?? 0) + 1;
-      if (!live[targetId]) live[targetId] = [];
-      live[targetId].push(voterId);
+    for (const [voterId, vote] of this.guesses.entries()) {
+      dist[vote.targetPlayerId] = (dist[vote.targetPlayerId] ?? 0) + 1;
+      if (!live[vote.targetPlayerId]) live[vote.targetPlayerId] = [];
+      live[vote.targetPlayerId].push(voterId);
     }
     this.state.voteDistribution = dist;
     this.state.liveVotes = live;
 
-    ctx.broadcastState(this.getPublicState());
+    // Instant auto-reveal when everyone in the room has voted!
+    if (this.guesses.size >= ctx.players.length) {
+      this.revealAnswer(ctx);
+    } else {
+      ctx.broadcastState(this.getPublicState());
+    }
     return { ok: true };
   }
 
@@ -205,11 +227,7 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       if (this.state.phase !== 'selecting-spotlight') {
         return { ok: false, error: 'Not selecting spotlight.' };
       }
-      this.cleanup();
-      const timerMs = ctx.settings.timerSeconds > 0 ? ctx.settings.timerSeconds * 1000 : null;
-      this.state.phase = 'submitting';
-      this.state.endsAt = timerMs ? Date.now() + timerMs : null;
-      ctx.broadcastState(this.getPublicState());
+      this.enterSubmittingPhase(ctx);
       return { ok: true };
     }
 
@@ -220,10 +238,7 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       if (this.statements.length === 0) {
         return { ok: false, error: 'Wait for at least 1 anonymous statement first.' };
       }
-      // Shuffle statements so submission order NEVER reveals authorship
-      this.statements = shuffleArray(this.statements);
-      this.state.totalStatements = this.statements.length;
-      this.loadStatementForGuessing(ctx, 0);
+      this.startGuessing(ctx);
       return { ok: true };
     }
 
@@ -231,75 +246,55 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       if (this.state.phase !== 'guessing') {
         return { ok: false, error: 'Not in guessing phase.' };
       }
-      const current = this.statements[this.state.currentStatementIndex];
-      if (!current) return { ok: false, error: 'No active statement.' };
-
-      const dist: Record<string, number> = {};
-      const live: Record<string, string[]> = {};
-      let correctCount = 0;
-
-      for (const [guesserId, targetId] of this.guesses.entries()) {
-        dist[targetId] = (dist[targetId] ?? 0) + 1;
-        if (!live[targetId]) live[targetId] = [];
-        live[targetId].push(guesserId);
-        if (targetId === current.authorId && guesserId !== current.authorId) {
-          correctCount += 1;
-          if (ctx.settings.enableScoring) {
-            ctx.awardScore(guesserId, 100);
-          }
-        }
-      }
-
-      // Bonus if author fooled everyone
-      if (correctCount === 0 && this.guesses.size > 0 && ctx.settings.enableScoring) {
-        ctx.awardScore(current.authorId, 50);
-      }
-
-      this.state.phase = 'reveal';
-      this.state.voteDistribution = dist;
-      this.state.liveVotes = live;
-      this.state.currentStatement = {
-        id: current.id,
-        text: current.text,
-        category: current.category,
-        ...(ctx.settings.revealAuthorsInAnonymous
-          ? { authorId: current.authorId, authorName: current.authorName }
-          : {}),
-      };
-      this.state.endsAt = null;
-      ctx.broadcastState(this.getPublicState());
+      this.revealAnswer(ctx);
       return { ok: true };
     }
 
     if (action === 'next-statement') {
-      const nextIdx = this.state.currentStatementIndex + 1;
-      if (nextIdx >= this.statements.length) {
-        this.state.phase = 'finished';
-        ctx.broadcastState(this.getPublicState());
-        ctx.finishGame({
-          gameId: 'who-said-that',
-          gameName: 'Who Said That?',
-          rankings: buildRankings(ctx.players, 'Master Detective'),
-          highlights: [
-            {
-              title: 'Secrets Shared',
-              description: `${this.statements.length} anonymous statements investigated.`,
-            },
-          ],
-          endedAt: Date.now(),
-        });
-        return { ok: true };
-      }
-      this.loadStatementForGuessing(ctx, nextIdx);
+      this.advanceToNextStatement(ctx);
       return { ok: true };
     }
 
     return { ok: false, error: `Unknown action: ${action}` };
   }
 
+  private enterSubmittingPhase(ctx: GameRuntimeContext) {
+    this.cleanup();
+    const timerMs = ctx.settings.timerSeconds > 0 ? ctx.settings.timerSeconds * 1000 : null;
+    this.state.phase = 'submitting';
+    this.state.endsAt = timerMs ? Date.now() + timerMs : null;
+    ctx.broadcastState(this.getPublicState());
+    if (timerMs) {
+      this.scheduleSubmissionAutoAdvance(ctx, timerMs);
+    }
+  }
+
+  private scheduleSubmissionAutoAdvance(ctx: GameRuntimeContext, timerMs: number) {
+    this.cleanup();
+    this.phaseTimer = setTimeout(() => {
+      if (this.state.phase !== 'submitting') return;
+      if (this.statements.length > 0) {
+        this.startGuessing(ctx);
+      } else {
+        this.finishGameSession(ctx);
+      }
+    }, timerMs);
+  }
+
+  private startGuessing(ctx: GameRuntimeContext) {
+    this.cleanup();
+    // Shuffle statements so submission order NEVER reveals authorship
+    this.statements = shuffleArray(this.statements);
+    this.state.totalStatements = this.statements.length;
+    this.loadStatementForGuessing(ctx, 0);
+  }
+
   private loadStatementForGuessing(ctx: GameRuntimeContext, index: number) {
+    this.cleanup();
     const stmt = this.statements[index];
     this.guesses.clear();
+    this.roundStartedAt = Date.now();
+
     const publicStmt: AnonymousPublicStatement = {
       id: stmt.id,
       text: stmt.text,
@@ -315,7 +310,115 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
     this.state.guessedPlayerIds = [];
     this.state.voteDistribution = {};
     this.state.liveVotes = {};
-    this.state.endsAt = timerMs ? Date.now() + timerMs : null;
+    this.state.roundPoints = {};
+    this.state.endsAt = timerMs ? this.roundStartedAt + timerMs : null;
     ctx.broadcastState(this.getPublicState());
+
+    if (timerMs) {
+      this.phaseTimer = setTimeout(() => {
+        if (this.state.phase === 'guessing') {
+          this.revealAnswer(ctx);
+        }
+      }, timerMs);
+    }
+  }
+
+  private revealAnswer(ctx: GameRuntimeContext) {
+    this.cleanup();
+    const current = this.statements[this.state.currentStatementIndex];
+    if (!current) return;
+
+    const dist: Record<string, number> = {};
+    const live: Record<string, string[]> = {};
+    const roundPoints: Record<string, RoundPointAward> = {};
+    let correctCount = 0;
+
+    for (const [guesserId, vote] of this.guesses.entries()) {
+      dist[vote.targetPlayerId] = (dist[vote.targetPlayerId] ?? 0) + 1;
+      if (!live[vote.targetPlayerId]) live[vote.targetPlayerId] = [];
+      live[vote.targetPlayerId].push(guesserId);
+
+      // Author can vote to bluff, but gets 0 guess points
+      if (guesserId === current.authorId) {
+        roundPoints[guesserId] = { points: 0, label: 'Bluff Vote (0 pts)' };
+        continue;
+      }
+
+      if (vote.targetPlayerId === current.authorId) {
+        correctCount += 1;
+        if (ctx.settings.enableScoring) {
+          const { multiplier, label } = calculateSpeedMultiplier(
+            vote.votedAt,
+            this.roundStartedAt,
+            ctx.settings.timerSeconds
+          );
+          const pts = Math.round(100 * multiplier);
+          ctx.awardScore(guesserId, pts);
+          roundPoints[guesserId] = { points: pts, multiplier, label };
+        }
+      }
+    }
+
+    // Bonus if author fooled everyone
+    if (correctCount === 0 && this.guesses.size > 0 && ctx.settings.enableScoring) {
+      ctx.awardScore(current.authorId, 50);
+      roundPoints[current.authorId] = {
+        points: (roundPoints[current.authorId]?.points ?? 0) + 50,
+        label: 'Fooled Everyone! (+50)',
+      };
+    }
+
+    const autoContinue = ctx.settings.timerSeconds > 0;
+    this.state.phase = 'reveal';
+    this.state.voteDistribution = dist;
+    this.state.liveVotes = live;
+    this.state.roundPoints = roundPoints;
+    this.state.currentStatement = {
+      id: current.id,
+      text: current.text,
+      category: current.category,
+      ...(ctx.settings.revealAuthorsInAnonymous
+        ? { authorId: current.authorId, authorName: current.authorName }
+        : {}),
+    };
+    this.state.endsAt = autoContinue ? Date.now() + REVEAL_HOLD_MS : null;
+    ctx.broadcastState(this.getPublicState());
+
+    if (autoContinue) {
+      this.phaseTimer = setTimeout(() => {
+        if (this.state.phase === 'reveal') {
+          this.advanceToNextStatement(ctx);
+        }
+      }, REVEAL_HOLD_MS);
+    }
+  }
+
+  private advanceToNextStatement(ctx: GameRuntimeContext) {
+    this.cleanup();
+    const nextIdx = this.state.currentStatementIndex + 1;
+    if (nextIdx >= this.statements.length) {
+      this.finishGameSession(ctx);
+      return;
+    }
+    this.loadStatementForGuessing(ctx, nextIdx);
+  }
+
+  private finishGameSession(ctx: GameRuntimeContext) {
+    this.cleanup();
+    this.state.phase = 'finished';
+    this.state.endsAt = null;
+    ctx.broadcastState(this.getPublicState());
+    ctx.finishGame({
+      gameId: 'who-said-that',
+      gameName: 'Who Said That?',
+      rankings: buildRankings(ctx.players, 'Master Detective'),
+      highlights: [
+        {
+          title: 'Secrets Shared',
+          description: `${this.statements.length} anonymous statements investigated.`,
+        },
+      ],
+      endedAt: Date.now(),
+    });
   }
 }

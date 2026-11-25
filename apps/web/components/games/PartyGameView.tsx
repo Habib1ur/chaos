@@ -182,7 +182,12 @@ export function PartyGameView({
       {(state.phase === 'voting' || state.phase === 'reveal') && (
         <div className="space-y-5">
           {state.phase === 'voting' && (
-            <CountdownTimer endsAt={state.endsAt} totalSeconds={room.settings.timerSeconds} />
+            <CountdownTimer endsAt={state.endsAt} totalSeconds={room.settings.timerSeconds || 45} />
+          )}
+          {state.phase === 'reveal' && state.endsAt && (
+            <div className="max-w-xs mx-auto">
+              <CountdownTimer endsAt={state.endsAt} totalSeconds={5} />
+            </div>
           )}
 
           {state.gameId === 'random-wheel' && state.phase === 'reveal' ? (
@@ -253,15 +258,40 @@ export function PartyGameView({
             </div>
           )}
 
-          {state.phase === 'reveal' && isHost && (
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => socket.emit('game:action', { action: 'next-round' })}
-                className="chaos-btn-primary"
-              >
-                {state.round >= state.totalRounds ? 'View Final Results' : 'Next Round →'}
-              </button>
+          {state.phase === 'reveal' && (
+            <div className="space-y-3 pt-2">
+              {state.roundPoints && Object.keys(state.roundPoints).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(state.roundPoints).map(([pid, award]) => {
+                    const p = room.players.find((pl) => pl.id === pid);
+                    if (!p) return null;
+                    return (
+                      <span
+                        key={pid}
+                        className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                          award.points > 0
+                            ? 'bg-chaos-green-soft text-chaos-green dark:bg-chaos-dark-elevated'
+                            : 'bg-chaos-bg text-chaos-text-muted dark:bg-chaos-dark-elevated'
+                        }`}
+                      >
+                        {p.nickname}: {award.points > 0 ? `+${award.points} pts` : ''}
+                        {award.label ? ` (${award.label})` : ''}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {isHost && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => socket.emit('game:action', { action: 'next-round' })}
+                    className="chaos-btn-primary"
+                  >
+                    {state.round >= state.totalRounds ? 'View Final Results' : 'Next Round →'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

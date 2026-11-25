@@ -82,11 +82,37 @@ describe('WhoSaidThatEngine', () => {
     // Duplicate guess blocked
     expect(engine.handleVote(ctx, 'p1', { targetPlayerId: 'p3' }).ok).toBe(false);
 
-    // Reveal answer awards 100 pts to p1
+    // Author p2 casts a bluff vote (allowed, but earns 0 guess points)
+    expect(engine.handleVote(ctx, 'p2', { targetPlayerId: 'p3' }).ok).toBe(true);
+
+    // Reveal answer awards 100 pts to p1 and 0 guess pts to p2
     expect(engine.handleAction(ctx, 'p1', 'reveal-answer').ok).toBe(true);
     const revealState = engine.getPublicState('p1');
     expect(revealState.phase).toBe('reveal');
     expect(revealState.currentStatement?.authorId).toBe('p2');
     expect(ctx.players.find((p) => p.id === 'p1')!.score).toBe(100);
+    expect(ctx.players.find((p) => p.id === 'p2')!.score).toBe(0);
+    expect(revealState.roundPoints?.['p2']?.label).toBe('Bluff Vote (0 pts)');
+  });
+
+  it('awards 1.5x speed multiplier when timed and auto-reveals when all players vote', () => {
+    const engine = new WhoSaidThatEngine();
+    const { ctx } = makeAnonContext();
+    ctx.settings.timerSeconds = 30;
+
+    engine.start(ctx);
+    engine.handleSubmit(ctx, 'p2', { text: 'Timed speed test statement!', category: 'funny' });
+    engine.handleAction(ctx, 'p1', 'start-guessing');
+
+    engine.handleVote(ctx, 'p1', { targetPlayerId: 'p2' });
+    engine.handleVote(ctx, 'p2', { targetPlayerId: 'p3' });
+    // 3rd player votes -> all 3 voted -> instant auto-reveal!
+    engine.handleVote(ctx, 'p3', { targetPlayerId: 'p2' });
+
+    const state = engine.getPublicState('p1');
+    expect(state.phase).toBe('reveal');
+    expect(ctx.players.find((p) => p.id === 'p1')!.score).toBe(150);
+    expect(ctx.players.find((p) => p.id === 'p2')!.score).toBe(0);
+    engine.cleanup();
   });
 });

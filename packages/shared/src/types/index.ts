@@ -205,6 +205,12 @@ export interface AnonymousPublicStatement {
   authorName?: string;
 }
 
+export interface RoundPointAward {
+  points: number;
+  multiplier?: number;
+  label?: string;
+}
+
 export interface WhoSaidThatState {
   gameId: 'who-said-that';
   phase: WhoSaidThatPhase;
@@ -224,6 +230,7 @@ export interface WhoSaidThatState {
   voteDistribution: Record<string, number>;
   /** Maps targetPlayerId -> array of voterPlayerIds for live voting balls */
   liveVotes: Record<string, string[]>;
+  roundPoints?: Record<string, RoundPointAward>;
   mySubmissionCount: number;
   endsAt: number | null;
 }
@@ -253,6 +260,7 @@ export interface PartyGameState {
   wheelWinnerIndex?: number | null;
   /** For Two Truths & a Lie: active storyteller */
   storytellerId?: string | null;
+  roundPoints?: Record<string, RoundPointAward>;
   endsAt: number | null;
 }
 
