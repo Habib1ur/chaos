@@ -28,14 +28,51 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
   private statements: InternalStatement[] = [];
   private submissionsPerPlayer = new Map<string, number>();
   private guesses = new Map<string, string>(); // guesserId -> targetPlayerId
+  private spotlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+  cleanup(): void {
+    if (this.spotlightTimer) {
+      clearTimeout(this.spotlightTimer);
+      this.spotlightTimer = null;
+    }
+  }
 
   start(ctx: GameRuntimeContext): WhoSaidThatState {
+    this.cleanup();
     this.statements = [];
     this.submissionsPerPlayer.clear();
     this.guesses.clear();
+
+    const mode = ctx.settings.anonymousMode ?? 'classic';
+    const messagesPerPlayer = ctx.settings.anonymousMessagesPerPlayer ?? 2;
+    const timerMs = ctx.settings.timerSeconds > 0 ? ctx.settings.timerSeconds * 1000 : null;
+
+    let spotlightPlayerId: string | null = null;
+    let spotlightPlayerName: string | null = null;
+    let initialPhase: WhoSaidThatState['phase'] = 'submitting';
+
+    if (mode === 'spotlight' && ctx.players.length > 0) {
+      const picked = ctx.players[crypto.randomInt(0, ctx.players.length)];
+      spotlightPlayerId = picked.id;
+      spotlightPlayerName = picked.nickname;
+      initialPhase = 'selecting-spotlight';
+
+      this.spotlightTimer = setTimeout(() => {
+        if (this.state.phase === 'selecting-spotlight') {
+          this.state.phase = 'submitting';
+          this.state.endsAt = timerMs ? Date.now() + timerMs : null;
+          ctx.broadcastState(this.getPublicState());
+        }
+      }, 3000);
+    }
+
     this.state = {
       gameId: 'who-said-that',
-      phase: 'submitting',
+      phase: initialPhase,
+      mode,
+      spotlightPlayerId,
+      spotlightPlayerName,
+      messagesPerPlayer,
       round: 1,
       totalStatements: 0,
       submissionsReceivedCount: 0,
@@ -45,8 +82,9 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       guessesCount: 0,
       guessedPlayerIds: [],
       voteDistribution: {},
+      liveVotes: {},
       mySubmissionCount: 0,
-      endsAt: Date.now() + 60_000,
+      endsAt: initialPhase === 'submitting' && timerMs ? Date.now() + timerMs : null,
     };
     return this.getPublicState();
   }
@@ -54,6 +92,12 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
   getPublicState(playerId?: string): WhoSaidThatState {
     return {
       ...this.state,
+      submittedPlayerIds: [...this.state.submittedPlayerIds],
+      guessedPlayerIds: [...this.state.guessedPlayerIds],
+      voteDistribution: { ...this.state.voteDistribution },
+      liveVotes: Object.fromEntries(
+        Object.entries(this.state.liveVotes).map(([k, v]) => [k, [...v]])
+      ),
       mySubmissionCount: playerId ? (this.submissionsPerPlayer.get(playerId) ?? 0) : 0,
     };
   }
@@ -69,9 +113,17 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
     const player = ctx.players.find((p) => p.id === playerId);
     if (!player) return { ok: false, error: 'Player not found.' };
 
+    if (this.state.mode === 'spotlight' && this.state.spotlightPlayerId === playerId) {
+      return {
+        ok: false,
+        error: 'You are in the Spotlight this round—other players are writing messages for you!',
+      };
+    }
+
+    const maxMsgs = this.state.messagesPerPlayer;
     const count = this.submissionsPerPlayer.get(playerId) ?? 0;
-    if (count >= 2) {
-      return { ok: false, error: 'You have reached the maximum of 2 submissions.' };
+    if (count >= maxMsgs) {
+      return { ok: false, error: `You have reached the maximum of ${maxMsgs} submissions.` };
     }
 
     const parsed = anonymousSubmitSchema.safeParse(payload);
@@ -119,9 +171,22 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       return { ok: false, error: 'You have already locked in your guess.' };
     }
 
+    // Even the writer and the Spotlight player can vote!
     this.guesses.set(playerId, parsed.data.targetPlayerId);
     this.state.guessesCount = this.guesses.size;
     this.state.guessedPlayerIds = Array.from(this.guesses.keys());
+
+    // Recompute live voting balls & counts for everyone to see immediately
+    const dist: Record<string, number> = {};
+    const live: Record<string, string[]> = {};
+    for (const [voterId, targetId] of this.guesses.entries()) {
+      dist[targetId] = (dist[targetId] ?? 0) + 1;
+      if (!live[targetId]) live[targetId] = [];
+      live[targetId].push(voterId);
+    }
+    this.state.voteDistribution = dist;
+    this.state.liveVotes = live;
+
     ctx.broadcastState(this.getPublicState());
     return { ok: true };
   }
@@ -134,6 +199,18 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
     const player = ctx.players.find((p) => p.id === playerId);
     if (!player?.isHost) {
       return { ok: false, error: 'Only the host can advance Who Said That? phases.' };
+    }
+
+    if (action === 'skip-spotlight-anim') {
+      if (this.state.phase !== 'selecting-spotlight') {
+        return { ok: false, error: 'Not selecting spotlight.' };
+      }
+      this.cleanup();
+      const timerMs = ctx.settings.timerSeconds > 0 ? ctx.settings.timerSeconds * 1000 : null;
+      this.state.phase = 'submitting';
+      this.state.endsAt = timerMs ? Date.now() + timerMs : null;
+      ctx.broadcastState(this.getPublicState());
+      return { ok: true };
     }
 
     if (action === 'start-guessing') {
@@ -158,10 +235,13 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       if (!current) return { ok: false, error: 'No active statement.' };
 
       const dist: Record<string, number> = {};
+      const live: Record<string, string[]> = {};
       let correctCount = 0;
 
       for (const [guesserId, targetId] of this.guesses.entries()) {
         dist[targetId] = (dist[targetId] ?? 0) + 1;
+        if (!live[targetId]) live[targetId] = [];
+        live[targetId].push(guesserId);
         if (targetId === current.authorId && guesserId !== current.authorId) {
           correctCount += 1;
           if (ctx.settings.enableScoring) {
@@ -177,6 +257,7 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
 
       this.state.phase = 'reveal';
       this.state.voteDistribution = dist;
+      this.state.liveVotes = live;
       this.state.currentStatement = {
         id: current.id,
         text: current.text,
@@ -225,6 +306,7 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
       category: stmt.category,
       // Explicitly omit authorId and authorName!
     };
+    const timerMs = ctx.settings.timerSeconds > 0 ? ctx.settings.timerSeconds * 1000 : null;
     this.state.phase = 'guessing';
     this.state.currentStatementIndex = index;
     this.state.round = index + 1;
@@ -232,7 +314,8 @@ export class WhoSaidThatEngine implements GameEngine<WhoSaidThatState> {
     this.state.guessesCount = 0;
     this.state.guessedPlayerIds = [];
     this.state.voteDistribution = {};
-    this.state.endsAt = Date.now() + ctx.settings.timerSeconds * 1000;
+    this.state.liveVotes = {};
+    this.state.endsAt = timerMs ? Date.now() + timerMs : null;
     ctx.broadcastState(this.getPublicState());
   }
 }

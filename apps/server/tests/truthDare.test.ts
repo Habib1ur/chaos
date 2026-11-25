@@ -48,6 +48,8 @@ function makeContext(): { ctx: GameRuntimeContext; players: PlayerInfo[] } {
     categories: ['funny', 'lighthearted'],
     rounds: 4,
     timerSeconds: 45,
+    anonymousMessagesPerPlayer: 2,
+    anonymousMode: 'classic',
     revealAuthorsInAnonymous: true,
     noConsecutiveKing: true,
   };

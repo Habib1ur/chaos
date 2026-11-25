@@ -40,6 +40,8 @@ export interface RoomSettings {
   categories: ContentCategory[];
   rounds: number;
   timerSeconds: number;
+  anonymousMessagesPerPlayer: number;
+  anonymousMode: 'classic' | 'spotlight';
   revealAuthorsInAnonymous: boolean;
   noConsecutiveKing: boolean;
 }
@@ -188,6 +190,7 @@ export interface KingsPrivateState {
 }
 
 export type WhoSaidThatPhase =
+  | 'selecting-spotlight'
   | 'submitting'
   | 'guessing'
   | 'reveal'
@@ -205,6 +208,10 @@ export interface AnonymousPublicStatement {
 export interface WhoSaidThatState {
   gameId: 'who-said-that';
   phase: WhoSaidThatPhase;
+  mode: 'classic' | 'spotlight';
+  spotlightPlayerId: string | null;
+  spotlightPlayerName: string | null;
+  messagesPerPlayer: number;
   round: number;
   totalStatements: number;
   submissionsReceivedCount: number;
@@ -215,6 +222,8 @@ export interface WhoSaidThatState {
   guessesCount: number;
   guessedPlayerIds: string[];
   voteDistribution: Record<string, number>;
+  /** Maps targetPlayerId -> array of voterPlayerIds for live voting balls */
+  liveVotes: Record<string, string[]>;
   mySubmissionCount: number;
   endsAt: number | null;
 }

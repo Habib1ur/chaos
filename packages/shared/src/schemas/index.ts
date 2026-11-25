@@ -48,7 +48,9 @@ export const updateRoomSettingsSchema = z.object({
   intensity: z.enum(CONTENT_INTENSITIES).optional(),
   categories: z.array(z.enum(CONTENT_CATEGORIES)).min(1).optional(),
   rounds: z.number().int().min(1).max(30).optional(),
-  timerSeconds: z.number().int().min(15).max(180).optional(),
+  timerSeconds: z.number().int().min(0).max(180).optional(),
+  anonymousMessagesPerPlayer: z.number().int().min(1).max(5).optional(),
+  anonymousMode: z.enum(['classic', 'spotlight']).optional(),
   revealAuthorsInAnonymous: z.boolean().optional(),
   noConsecutiveKing: z.boolean().optional(),
 });

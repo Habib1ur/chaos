@@ -36,6 +36,8 @@ function makeKingsContext() {
     categories: ['funny'],
     rounds: 3,
     timerSeconds: 45,
+    anonymousMessagesPerPlayer: 2,
+    anonymousMode: 'classic',
     revealAuthorsInAnonymous: true,
     noConsecutiveKing: true,
   };

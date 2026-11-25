@@ -111,6 +111,8 @@ export class RoomManager {
       categories: params.categories,
       rounds: ROOM_DEFAULTS.rounds,
       timerSeconds: ROOM_DEFAULTS.roundTimerSeconds,
+      anonymousMessagesPerPlayer: 2,
+      anonymousMode: 'classic',
       revealAuthorsInAnonymous: true,
       noConsecutiveKing: true,
     };

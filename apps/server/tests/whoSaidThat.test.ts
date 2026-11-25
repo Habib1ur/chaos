@@ -33,7 +33,9 @@ function makeAnonContext() {
     intensity: 'medium',
     categories: ['funny'],
     rounds: 3,
-    timerSeconds: 45,
+    timerSeconds: 0,
+    anonymousMessagesPerPlayer: 3,
+    anonymousMode: 'classic',
     revealAuthorsInAnonymous: true,
     noConsecutiveKing: true,
   };
@@ -73,8 +75,10 @@ describe('WhoSaidThatEngine', () => {
     expect(guessingState.currentStatement?.authorId).toBeUndefined();
     expect(guessingState.currentStatement?.authorName).toBeUndefined();
 
-    // Player 1 guesses Player 2 correctly
+    // Player 1 guesses Player 2 correctly (liveVotes updates immediately)
     expect(engine.handleVote(ctx, 'p1', { targetPlayerId: 'p2' }).ok).toBe(true);
+    expect(engine.getPublicState('p1').liveVotes['p2']).toEqual(['p1']);
+    expect(engine.getPublicState('p1').endsAt).toBeNull(); // untimed mode!
     // Duplicate guess blocked
     expect(engine.handleVote(ctx, 'p1', { targetPlayerId: 'p3' }).ok).toBe(false);
 
