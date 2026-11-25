@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-chaos-bg text-chaos-text dark:bg-chaos-dark-bg dark:text-chaos-dark-text antialiased;
+    overflow-x: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+.chaos-gradient {
+  background: linear-gradient(120deg, #3478F6 0%, #16A36A 100%);
+}
+
+.chaos-gradient-text {
+  background: linear-gradient(120deg, #3478F6 0%, #16A36A 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.chaos-card {
+  @apply bg-chaos-surface dark:bg-chaos-dark-surface border border-chaos-border dark:border-chaos-dark-border rounded-card shadow-chaos dark:shadow-chaos-dark transition-all duration-200;
+}
+
+.chaos-btn-primary {
+  @apply chaos-gradient text-white font-semibold rounded-btn px-5 py-3 min-h-[44px] inline-flex items-center justify-center gap-2 shadow-glow hover:opacity-95 active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none;
+}
+
+.chaos-btn-secondary {
+  @apply bg-chaos-surface dark:bg-chaos-dark-elevated text-chaos-text dark:text-chaos-dark-text border border-chaos-border dark:border-chaos-dark-border font-semibold rounded-btn px-5 py-3 min-h-[44px] inline-flex items-center justify-center gap-2 hover:border-chaos-blue dark:hover:border-chaos-dark-blue active:scale-[0.98] transition-all disabled:opacity-50 disabled:pointer-events-none;
+}
+
+.hero-title {
+  font-size: clamp(2.125rem, 5vw, 4.125rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.page-title {
+  font-size: clamp(1.75rem, 3.2vw, 2.75rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}

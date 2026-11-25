@@ -1,0 +1,305 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// USERS, PROFILES & GUEST SESSIONS
+// ============================================================================
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  username     String       @unique
+  passwordHash String
+  role         String       @default("user") // "user" | "admin"
+  isBanned     Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  profile      UserProfile?
+  achievements UserAchievement[]
+  friendsA     Friend[]     @relation("FriendRequester")
+  friendsB     Friend[]     @relation("FriendAddressee")
+  reportsFiled Report[]     @relation("ReportAuthor")
+  templates    RoomTemplate[]
+}
+
+model UserProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName     String
+  avatarId        String   @default("fox")
+  bio             String?  @db.VarChar(240)
+  themePreference String   @default("system") // "light" | "dark" | "system"
+  isPrivate       Boolean  @default(false)
+  favoriteGames   String[] @default([])
+  gamesPlayed     Int      @default(0)
+  gamesWon        Int      @default(0)
+  truthsCompleted Int      @default(0)
+  daresCompleted  Int      @default(0)
+  correctGuesses  Int      @default(0)
+  totalScore      Int      @default(0)
+  updatedAt       DateTime @updatedAt
+}
+
+model GuestSession {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  nickname  String
+  avatarId  String   @default("fox")
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+// ============================================================================
+// ROOMS & SESSIONS
+// ============================================================================
+
+model Room {
+  id           String       @id @default(cuid())
+  code         String       @unique
+  name         String
+  visibility   String       @default("private") // "public" | "private" | "invite-only"
+  passwordHash String?
+  hostPlayerId String
+  selectedGame String       @default("truth-dare")
+  status       String       @default("lobby") // "lobby" | "playing" | "results"
+  settingsJson Json
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  members      RoomMember[]
+  sessions     GameSession[]
+  reports      Report[]
+
+  @@index([visibility, status])
+}
+
+model RoomMember {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  playerId  String
+  userId    String?
+  nickname  String
+  avatarId  String
+  isHost    Boolean  @default(false)
+  score     Int      @default(0)
+  joinedAt  DateTime @default(now())
+  leftAt    DateTime?
+
+  @@unique([roomId, playerId])
+  @@index([roomId])
+}
+
+model RoomTemplate {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  selectedGame String
+  settingsJson Json
+  createdAt    DateTime @default(now())
+}
+
+model GameSession {
+  id          String       @id @default(cuid())
+  roomId      String
+  room        Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  gameId      String
+  status      String       @default("active") // "active" | "finished"
+  configJson  Json?
+  resultsJson Json?
+  startedAt   DateTime     @default(now())
+  endedAt     DateTime?
+
+  players              GamePlayer[]
+  truthSubmissions     TruthSubmission[]
+  dareSubmissions      DareSubmission[]
+  kingAssignments      KingAssignment[]
+  anonymousSubmissions AnonymousSubmission[]
+  votes                Vote[]
+
+  @@index([roomId, gameId])
+}
+
+model GamePlayer {
+  id            String      @id @default(cuid())
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  playerId      String
+  nickname      String
+  score         Int         @default(0)
+  assignedNum   Int?
+  isKing        Boolean     @default(false)
+
+  @@unique([gameSessionId, playerId])
+}
+
+// ============================================================================
+// GAME CONTENT & SUBMISSIONS (WITH STRICT PRIVACY SEPARATION)
+// ============================================================================
+
+model Prompt {
+  id        String   @id @default(cuid())
+  gameId    String   // "truth-dare" | "most-likely-to" | "never-have-i-ever" | "would-you-rather" | "hot-takes" | "quick-quiz"
+  type      String   @default("prompt") // "truth" | "dare" | "prompt" | "quiz"
+  text      String
+  metaJson  Json?    // e.g. options for Would You Rather or Quiz
+  category  String   @default("funny")
+  intensity String   @default("medium") // "chill" | "medium" | "spicy"
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([gameId, category, intensity])
+}
+
+model TruthSubmission {
+  id            String      @id @default(cuid())
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  authorId      String      // Never exposed in public queries
+  text          String
+  category      String      @default("funny")
+  intensity     String      @default("medium")
+  approved      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+}
+
+model DareSubmission {
+  id            String      @id @default(cuid())
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  authorId      String      // Never exposed in public queries
+  text          String
+  category      String      @default("funny")
+  intensity     String      @default("medium")
+  approved      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+}
+
+model KingAssignment {
+  id            String      @id @default(cuid())
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  round         Int
+  kingPlayerId  String
+  targetNumber  Int
+  type          String      // "truth" | "dare"
+  text          String
+  revealed      Boolean     @default(false)
+  outcome       String?     // "completed" | "skipped" | "passed"
+  createdAt     DateTime    @default(now())
+
+  @@index([gameSessionId, round])
+}
+
+model AnonymousSubmission {
+  id            String      @id @default(cuid())
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  /// Server-only author mapping. Must NEVER be selected in public API responses.
+  authorId      String
+  text          String
+  category      String      @default("funny")
+  isRemoved     Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  guesses       AnonymousGuess[]
+
+  @@index([gameSessionId])
+}
+
+model AnonymousGuess {
+  id             String              @id @default(cuid())
+  submissionId   String
+  submission     AnonymousSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  guesserId      String
+  guessedOwnerId String
+  isCorrect      Boolean
+  createdAt      DateTime            @default(now())
+
+  @@unique([submissionId, guesserId])
+}
+
+model Vote {
+  id            String      @id @default(cuid())
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  round         Int
+  voterId       String
+  choice        String
+  createdAt     DateTime    @default(now())
+
+  @@unique([gameSessionId, round, voterId])
+}
+
+// ============================================================================
+// SOCIAL, ACHIEVEMENTS & MODERATION
+// ============================================================================
+
+model Achievement {
+  id          String   @id
+  name        String
+  description String
+  icon        String
+  points      Int      @default(50)
+
+  users       UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  unlockedAt    DateTime    @default(now())
+
+  @@unique([userId, achievementId])
+}
+
+model Friend {
+  id          String   @id @default(cuid())
+  requesterId String
+  requester   User     @relation("FriendRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addresseeId String
+  addressee   User     @relation("FriendAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  status      String   @default("pending") // "pending" | "accepted" | "blocked"
+  createdAt   DateTime @default(now())
+
+  @@unique([requesterId, addresseeId])
+}
+
+model Report {
+  id         String   @id @default(cuid())
+  roomId     String?
+  room       Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  reporterId String?
+  reporter   User?    @relation("ReportAuthor", fields: [reporterId], references: [id], onDelete: SetNull)
+  targetType String   // "submission" | "chat" | "player"
+  targetId   String
+  reason     String
+  status     String   @default("open") // "open" | "reviewed" | "resolved"
+  createdAt  DateTime @default(now())
+
+  actions    ModerationAction[]
+}
+
+model ModerationAction {
+  id        String   @id @default(cuid())
+  reportId  String?
+  report    Report?  @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  actorId   String
+  action    String   // "remove_content" | "kick_player" | "ban_user" | "dismiss"
+  notes     String?
+  createdAt DateTime @default(now())
+}
